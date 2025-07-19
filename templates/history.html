@@ -1,0 +1,362 @@
+{% extends "base.html" %}
+
+{% block title %}Downloaded Songs - Free Jam{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <div class="user-welcome">
+            <h2>Your Downloaded Songs 💾</h2>
+            <p>Access and play songs that you have downloaded to Free Jam's library.</p>
+        </div>
+    </div>
+
+    <div class="downloaded-songs-section">
+        <div class="section-header">
+            <h3>Available Offline</h3>
+            <button id="refreshSongs" class="btn btn-secondary">🔄 Refresh</button>
+        </div>
+        
+        <div id="downloadedSongsList" class="downloaded-songs-grid">
+            <div class="loading-songs">Loading downloaded songs...</div>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="error-message" style="display: none;"></div>
+    <div id="successMessage" class="success-message" style="display: none;"></div>
+
+    <!-- Hidden audio player for local playback -->
+    <audio id="localAudioPlayer" preload="metadata" style="display: none;"></audio>
+</div>
+
+<script>
+let localAudioPlayer = document.getElementById('localAudioPlayer');
+let currentPlayingLocalSongId = null;
+
+// Function to fetch and display downloaded songs
+async function loadDownloadedSongs() {
+    const container = document.getElementById('downloadedSongsList');
+    container.innerHTML = '<div class="loading-songs">Loading downloaded songs...</div>';
+    
+    try {
+        const response = await fetch('/api/downloaded-songs');
+        const data = await response.json();
+        
+        if (data.songs && data.songs.length > 0) {
+            container.innerHTML = data.songs.map(song => `
+                <div class="downloaded-song-card" data-youtube-id="${song.youtube_id}">
+                    <img src="${song.thumbnail}" alt="${escapeHtml(song.title)}" class="song-thumbnail" 
+                         onerror="this.src='https://img.youtube.com/vi/${song.youtube_id}/mqdefault.jpg'">
+                    <div class="song-info">
+                        <h4 class="song-title">${escapeHtml(song.title)}</h4>
+                        <p class="song-channel">${escapeHtml(song.channel_title)}</p>
+                        <p class="song-duration">🎵 ${formatTime(song.duration)}</p>
+                    </div>
+                    <div class="song-actions">
+                        <button class="btn btn-primary play-local-btn" 
+                                data-youtube-id="${song.youtube_id}"
+                                data-title="${escapeHtml(song.title)}">
+                            ${currentPlayingLocalSongId === song.youtube_id && !localAudioPlayer.paused ? '⏸️ Pause' : '▶️ Play'}
+                        </button>
+                        <button class="btn btn-secondary add-to-room-btn" 
+                                data-youtube-id="${song.youtube_id}"
+                                data-title="${escapeHtml(song.title)}"
+                                data-duration="${song.duration}"
+                                data-thumbnail="${song.thumbnail}"
+                                data-channel-title="${escapeHtml(song.channel_title)}">
+                            ➕ Add to Room
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            updatePlayButtons(); // Update button states after rendering
+        } else {
+            container.innerHTML = '<div class="no-songs">No songs downloaded yet. Add some from a room!</div>';
+        }
+    } catch (error) {
+        console.error('Error loading downloaded songs:', error);
+        container.innerHTML = '<div class="error-message">Failed to load songs. Please try again.</div>';
+    }
+}
+
+// Update play/pause buttons based on current local player state
+function updatePlayButtons() {
+    document.querySelectorAll('.play-local-btn').forEach(btn => {
+        const youtubeId = btn.dataset.youtubeId;
+        if (youtubeId === currentPlayingLocalSongId && !localAudioPlayer.paused) {
+            btn.innerHTML = '⏸️ Pause';
+        } else {
+            btn.innerHTML = '▶️ Play';
+        }
+    });
+}
+
+// Event listener for "Play" buttons
+document.getElementById('downloadedSongsList').addEventListener('click', async (e) => {
+    if (e.target.classList.contains('play-local-btn')) {
+        const btn = e.target;
+        const youtubeId = btn.dataset.youtubeId;
+        const title = btn.dataset.title;
+
+        if (currentPlayingLocalSongId === youtubeId) {
+            // Same song, toggle play/pause
+            if (localAudioPlayer.paused) {
+                localAudioPlayer.play();
+                showNotification(`▶️ Playing: ${title}`);
+            } else {
+                localAudioPlayer.pause();
+                showNotification(`⏸️ Paused: ${title}`);
+            }
+        } else {
+            // New song, load and play
+            localAudioPlayer.src = `/stream/${youtubeId}`;
+            localAudioPlayer.load();
+            localAudioPlayer.play();
+            currentPlayingLocalSongId = youtubeId;
+            showNotification(`▶️ Playing: ${title}`);
+        }
+        updatePlayButtons();
+    }
+});
+
+// Event listener for "Add to Room" buttons
+document.getElementById('downloadedSongsList').addEventListener('click', async (e) => {
+    if (e.target.classList.contains('add-to-room-btn')) {
+        const btn = e.target;
+        const youtubeId = btn.dataset.youtubeId;
+        const title = btn.dataset.title;
+        const duration = parseInt(btn.dataset.duration);
+        const thumbnail = btn.dataset.thumbnail;
+        const channelTitle = btn.dataset.channelTitle;
+
+        const roomId = prompt('Enter the Room ID you want to add this song to:');
+        if (!roomId) {
+            showNotification('Room ID is required to add a song.', 'error');
+            return;
+        }
+
+        let pin = null;
+        // We'll try without PIN first, and if the backend says it's private, we'll prompt.
+
+        try {
+            const response = await fetch('/add-song', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    room_id: roomId,
+                    youtube_id: youtubeId,
+                    title: title,
+                    duration: duration,
+                    thumbnail: thumbnail,
+                    channel_title: channelTitle,
+                    pin: pin // Send null initially
+                })
+            });
+            
+            const data = await response.json();
+
+            if (response.status === 403 && data.message === 'Invalid PIN for private room') {
+                // Room is private, prompt for PIN
+                pin = prompt(`Room "${roomId}" is private. Please enter the PIN:`);
+                if (pin === null) { // Check for null if user cancels prompt
+                    showNotification('PIN is required for private rooms.', 'error');
+                    return;
+                }
+
+                // Trim the PIN before retrying
+                pin = pin.trim();
+
+                // Retry with PIN
+                const retryResponse = await fetch('/add-song', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        room_id: roomId,
+                        youtube_id: youtubeId,
+                        title: title,
+                        duration: duration,
+                        thumbnail: thumbnail,
+                        channel_title: channelTitle,
+                        pin: pin
+                    })
+                });
+                const retryData = await retryResponse.json();
+
+                if (retryData.success) {
+                    showNotification(retryData.message);
+                } else {
+                    showNotification(retryData.message, 'error');
+                }
+
+            } else if (data.success) {
+                showNotification(data.message);
+            } else {
+                showNotification(data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error adding song to room:', error);
+            showNotification('Network error. Failed to add song to room.', 'error');
+        }
+    }
+});
+
+// Handle local audio player events
+localAudioPlayer.addEventListener('ended', () => {
+    currentPlayingLocalSongId = null;
+    updatePlayButtons();
+    showNotification('Local playback ended.');
+});
+
+localAudioPlayer.addEventListener('pause', () => {
+    updatePlayButtons();
+});
+
+localAudioPlayer.addEventListener('play', () => {
+    updatePlayButtons();
+});
+
+localAudioPlayer.addEventListener('error', (e) => {
+    console.error('Local audio player error:', e);
+    showNotification('Error playing song locally.', 'error');
+    currentPlayingLocalSongId = null;
+    updatePlayButtons();
+});
+
+
+// Refresh button
+document.getElementById('refreshSongs').addEventListener('click', loadDownloadedSongs);
+
+// Load songs on page load
+document.addEventListener('DOMContentLoaded', loadDownloadedSongs);
+
+// Helper functions (already in main.js, but included here for clarity if this file is viewed standalone)
+function formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function showNotification(message, type = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+
+<style>
+/* New styles for the downloaded songs section */
+.downloaded-songs-section {
+    margin-top: 3rem;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(20px);
+    border-radius: 20px;
+    padding: 2rem;
+    box-shadow: 0 15px 50px rgba(255, 0, 110, 0.2);
+    border: 1px solid rgba(255, 0, 110, 0.3);
+}
+
+.downloaded-songs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+
+.downloaded-song-card {
+    background: rgba(255, 0, 110, 0.1);
+    padding: 1rem;
+    border-radius: 15px;
+    border: 1px solid rgba(255, 0, 110, 0.3);
+    backdrop-filter: blur(10px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.downloaded-song-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 40px rgba(255, 0, 110, 0.3);
+    border-color: #ff006e;
+}
+
+.song-thumbnail {
+    width: 100%;
+    max-width: 180px;
+    height: 135px; /* Maintain aspect ratio for 4:3 thumbnails */
+    object-fit: cover;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.song-info {
+    flex-grow: 1;
+    margin-bottom: 1rem;
+}
+
+.song-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.5rem;
+    line-height: 1.3;
+}
+
+.song-channel {
+    font-size: 0.9rem;
+    color: #ccc;
+    margin-bottom: 0.25rem;
+}
+
+.song-duration {
+    font-size: 0.85rem;
+    color: #8338ec;
+}
+
+.song-actions {
+    display: flex;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.song-actions .btn {
+    flex: 1;
+    padding: 0.75rem;
+    font-size: 0.95rem;
+}
+
+.loading-songs, .no-songs {
+    text-align: center;
+    color: #ccc;
+    padding: 3rem;
+    font-style: italic;
+    grid-column: 1 / -1; /* Span across all columns */
+}
+
+@media (max-width: 768px) {
+    .downloaded-songs-grid {
+        grid-template-columns: 1fr;
+    }
+    .downloaded-song-card {
+        max-width: 350px;
+        margin: 0 auto;
+    }
+}
+</style>
+{% endblock %}

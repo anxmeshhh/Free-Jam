@@ -1,0 +1,759 @@
+{% extends "base.html" %}
+
+{% block title %}{{ room_name }} - Free Jam{% endblock %}
+
+{% block content %}
+<div class="room-container">
+  <div class="room-header">
+      <h2>{{ room_name }}</h2>
+      <div class="room-info">
+          <span class="room-id" onclick="copyRoomId()">Room ID: {{ room_id }}</span>
+          <div class="users-online">
+              <span id="userCount">0 users online</span>
+          </div>
+      </div>
+  </div>
+  
+  <div class="room-content">
+      <div class="player-section">
+          <div class="music-player">
+              <div class="player-info">
+                  <div id="currentSong" class="current-song">
+                      <span class="no-song">No song playing</span>
+                  </div>
+              </div>
+              
+              <div class="player-controls">
+                  <button id="playPauseBtn" class="control-btn" disabled>
+                      <span class="play-icon">▶️</span>
+                  </button>
+                  <button id="nextBtn" class="control-btn">⏭️</button>
+              </div>
+              
+              <div class="progress-container">
+                  <div class="progress-bar" id="progressBar">
+                      <div id="progressFill" class="progress-fill"></div>
+                  </div>
+                  <div class="time-display">
+                      <span id="currentTime">0:00</span>
+                      <span id="totalTime">0:00</span>
+                  </div>
+              </div>
+      
+              <!-- HTML5 Audio Player for offline playback -->
+              <audio id="audioPlayer" preload="metadata" style="display: none;"></audio>
+              
+              <!-- YouTube Player (hidden, fallback for online streaming) -->
+              <div id="youtube-player" style="position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px;"></div>
+          </div>
+      </div>
+      
+      <div class="sidebar">
+          <div class="tabs">
+              <button class="tab-btn active" data-tab="search">🔍 Search Songs</button>
+              <button class="tab-btn" data-tab="playlist">📋 Playlist</button>
+              <button class="tab-btn" data-tab="users">👥 Users</button>
+          </div>
+          
+          <div id="searchTab" class="tab-content active">
+              <div class="search-section">
+                  <form id="searchForm" class="search-form">
+                      <input type="text" id="searchQuery" placeholder="Search YouTube for songs..." required>
+                      <button type="submit" class="btn btn-primary">Search</button>
+                  </form>
+                  
+                  <div id="searchLoading" class="search-loading" style="display: none;">
+                      <p>🔍 Searching YouTube...</p>
+                  </div>
+                  
+                  <div id="searchResults" class="search-results"></div>
+              </div>
+          </div>
+          
+          <div id="playlistTab" class="tab-content">
+              <div class="playlist-section">
+                  <h3>Room Playlist</h3>
+                  <div id="playlist" class="playlist">
+                      <p class="empty-playlist">No songs in playlist yet</p>
+                  </div>
+              </div>
+          </div>
+          
+          <div id="usersTab" class="tab-content">
+              <div class="users-section">
+                  <h3>Users in Room</h3>
+                  <div id="usersList" class="users-list"></div>
+              </div>
+          </div>
+      </div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+const roomId = '{{ room_id }}';
+let currentSong = null;
+let isPlaying = false;
+let roomPlaylist = [];
+
+// Audio players
+let audioPlayer = document.getElementById('audioPlayer');
+let player; // YouTube player
+let isPlayerReady = false;
+let playerStateChanging = false;
+let useOfflinePlayer = false; // Flag to determine which player to use
+
+// Load YouTube API (fallback)
+function loadYouTubeAPI() {
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  const firstScriptTag = document.getElementsByTagName('script')[0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+}
+
+// YouTube API ready callback
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('youtube-player', {
+      height: '1',
+      width: '1',
+      playerVars: {
+          'playsinline': 1,
+          'controls': 0,
+          'disablekb': 1,
+          'fs': 0,
+          'modestbranding': 1,
+          'rel': 0,
+          'autoplay': 0,
+          'origin': window.location.origin,
+          'enablejsapi': 1,
+          'iv_load_policy': 3,
+          'showinfo': 0,
+          'cc_load_policy': 0,
+          'start': 0
+      },
+      events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange,
+          'onError': onPlayerError
+      }
+  });
+}
+
+function onPlayerReady(event) {
+  isPlayerReady = true;
+  console.log('YouTube player ready (fallback mode)');
+  player.setVolume(100);
+}
+
+function onPlayerError(event) {
+  console.error('YouTube player error:', event.data);
+  showNotification('YouTube playback error. Trying next song...', 'error');
+  setTimeout(() => {
+      document.getElementById('nextBtn').click();
+  }, 2000);
+}
+
+function onPlayerStateChange(event) {
+  if (playerStateChanging || useOfflinePlayer) return;
+  
+  // Handle YouTube player state changes
+  if (event.data === YT.PlayerState.PLAYING && !isPlaying) {
+      isPlaying = true;
+      updatePlayPauseButton();
+      socket.emit('play_pause', {
+          room_id: roomId,
+          is_playing: true,
+          current_time: player.getCurrentTime()
+      });
+  } else if (event.data === YT.PlayerState.PAUSED && isPlaying) {
+      isPlaying = false;
+      updatePlayPauseButton();
+      socket.emit('play_pause', {
+          room_id: roomId,
+          is_playing: false,
+          current_time: player.getCurrentTime()
+      });
+  } else if (event.data === YT.PlayerState.ENDED) {
+      document.getElementById('nextBtn').click();
+  }
+}
+
+// HTML5 Audio Player Events
+audioPlayer.addEventListener('loadedmetadata', () => {
+  console.log('Audio loaded (offline mode)');
+  updateUI();
+});
+
+audioPlayer.addEventListener('play', () => {
+  if (!playerStateChanging && useOfflinePlayer) {
+      isPlaying = true;
+      updatePlayPauseButton();
+      socket.emit('play_pause', {
+          room_id: roomId,
+          is_playing: true,
+          current_time: audioPlayer.currentTime
+      });
+  }
+});
+
+audioPlayer.addEventListener('pause', () => {
+  if (!playerStateChanging && useOfflinePlayer) {
+      isPlaying = false;
+      updatePlayPauseButton();
+      socket.emit('play_pause', {
+          room_id: roomId,
+          is_playing: false,
+          current_time: audioPlayer.currentTime
+      });
+  }
+});
+
+audioPlayer.addEventListener('ended', () => {
+  if (useOfflinePlayer) {
+      document.getElementById('nextBtn').click();
+  }
+});
+
+audioPlayer.addEventListener('error', (e) => {
+  console.error('Audio player error:', e);
+  showNotification('Audio playback error. Trying YouTube fallback...', 'error');
+  
+  // Fallback to YouTube player
+  if (currentSong && !currentSong.is_downloaded) {
+      useOfflinePlayer = false;
+      loadYouTubeSong(currentSong.youtube_id);
+  }
+});
+
+// Load song based on availability
+function loadSong(song) {
+  if (song.is_downloaded) {
+      // Use offline player
+      useOfflinePlayer = true;
+      audioPlayer.src = `/stream/${song.youtube_id}`;
+      audioPlayer.load();
+      console.log(`Loading offline: ${song.title}`);
+      showNotification(`🎵 Playing offline: ${song.title}`, 'success');
+      document.getElementById('playPauseBtn').disabled = false; // Enable play button
+  } else {
+      // Don't play - show message that download is required
+      useOfflinePlayer = false;
+      console.log(`Song not downloaded: ${song.title}`);
+      showNotification(`⏳ Waiting for download to complete: ${song.title}`, 'warning');
+      
+      // Disable play button until download completes
+      document.getElementById('playPauseBtn').disabled = true;
+      // If YouTube player is ready, load it as a fallback for non-downloaded songs
+      if (isPlayerReady && player.loadVideoById) {
+          loadYouTubeSong(song.youtube_id);
+          document.getElementById('playPauseBtn').disabled = false; // Enable play button if YouTube is fallback
+      }
+  }
+}
+
+function loadYouTubeSong(youtubeId) {
+  if (isPlayerReady && player.loadVideoById) {
+      try {
+          player.loadVideoById({
+              videoId: youtubeId,
+              startSeconds: 0
+          });
+      } catch (error) {
+          console.error('Error loading YouTube song:', error);
+          showNotification('Failed to load song from YouTube', 'error');
+      }
+  }
+}
+
+// Copy room ID to clipboard
+function copyRoomId() {
+  const roomId = '{{ room_id }}';
+  navigator.clipboard.writeText(roomId).then(() => {
+      showNotification('Room ID copied to clipboard!');
+  });
+}
+
+// Join room on page load
+socket.emit('join_room', { room_id: roomId });
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+      const tabName = btn.dataset.tab;
+      
+      // Update active tab button
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // Update active tab content
+      document.querySelectorAll('.tab-content').forEach(content => {
+          content.classList.remove('active');
+      });
+      document.getElementById(tabName + 'Tab').classList.add('active');
+  });
+});
+
+// Search form
+document.getElementById('searchForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const query = document.getElementById('searchQuery').value.trim();
+  if (!query) return;
+  
+  const loadingDiv = document.getElementById('searchLoading');
+  const resultsDiv = document.getElementById('searchResults');
+  
+  loadingDiv.style.display = 'block';
+  resultsDiv.innerHTML = '';
+  
+  try {
+      const response = await fetch('/search-songs', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query })
+      });
+      
+      const data = await response.json();
+      loadingDiv.style.display = 'none';
+      displaySearchResults(data.results || []);
+  } catch (error) {
+      console.error('Search error:', error);
+      loadingDiv.style.display = 'none';
+      resultsDiv.innerHTML = '<p class="error">Search failed. Please try again.</p>';
+  }
+});
+
+function displaySearchResults(results) {
+  const resultsDiv = document.getElementById('searchResults');
+  
+  if (results.length === 0) {
+      resultsDiv.innerHTML = '<p class="no-results">No results found</p>';
+      return;
+  }
+  
+  resultsDiv.innerHTML = results.map(result => `
+      <div class="search-result">
+          <img src="${result.thumbnail}" alt="${result.title}" class="result-thumbnail" 
+               onerror="this.src='https://img.youtube.com/vi/${result.id}/mqdefault.jpg'">
+          <div class="result-info">
+              <h4 class="result-title">${escapeHtml(result.title)}</h4>
+              <p class="result-channel">${escapeHtml(result.channel_title)}</p>
+              <p class="result-duration">🎵 ${formatTime(result.duration)}</p>
+              <p class="download-note">⚠️ Song will download before playing</p>
+          </div>
+          <button class="btn btn-secondary add-song-btn" 
+                  onclick="addSong('${result.id}', \`${escapeHtml(result.title)}\`, ${result.duration}, '${result.thumbnail}', \`${escapeHtml(result.channel_title)}\`)">
+              📥 Add & Download
+          </button>
+      </div>
+  `).join('');
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function addSong(youtubeId, title, duration, thumbnail, channelTitle) {
+  try {
+      const response = await fetch('/add-song', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+              room_id: roomId,
+              youtube_id: youtubeId,
+              title: title,
+              duration: duration,
+              thumbnail: thumbnail,
+              channel_title: channelTitle
+          })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+          showNotification(data.message);
+      } else {
+          showNotification(data.message, 'error');
+      }
+  } catch (error) {
+      console.error('Add song error:', error);
+      showNotification('Failed to add song', 'error');
+  }
+}
+
+// Player controls
+document.getElementById('playPauseBtn').addEventListener('click', () => {
+  if (!currentSong) {
+      showNotification('No song loaded', 'error');
+      return;
+  }
+  
+  playerStateChanging = true;
+  
+  try {
+      if (useOfflinePlayer) {
+          // Use HTML5 audio player
+          if (isPlaying) {
+              audioPlayer.pause();
+              isPlaying = false;
+          } else {
+              audioPlayer.play();
+              isPlaying = true;
+          }
+      } else {
+          // Use YouTube player
+          if (!isPlayerReady) {
+              showNotification('Player not ready', 'error');
+              return;
+          }
+          
+          if (isPlaying) {
+              player.pauseVideo();
+              isPlaying = false;
+          } else {
+              player.playVideo();
+              isPlaying = true;
+          }
+      }
+      
+      updatePlayPauseButton();
+      
+      socket.emit('play_pause', {
+          room_id: roomId,
+          is_playing: isPlaying,
+          current_time: getCurrentTime()
+      });
+  } catch (error) {
+      console.error('Play/pause error:', error);
+      showNotification('Playback error', 'error');
+  }
+  
+  setTimeout(() => { playerStateChanging = false; }, 500);
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  socket.emit('next_song', { room_id: roomId });
+});
+
+function getCurrentTime() {
+  if (useOfflinePlayer) {
+      return audioPlayer.currentTime || 0;
+  } else if (isPlayerReady && player.getCurrentTime) {
+      try {
+          return player.getCurrentTime() || 0;
+      } catch (error) {
+          return 0;
+      }
+  }
+  return 0;
+}
+
+function seekTo(time) {
+  if (useOfflinePlayer) {
+      audioPlayer.currentTime = time;
+  } else if (isPlayerReady && player.seekTo) {
+      try {
+          player.seekTo(time, true);
+      } catch (error) {
+          console.error('Seek error:', error);
+      }
+  }
+}
+
+function updatePlayPauseButton() {
+  const btn = document.getElementById('playPauseBtn');
+  const icon = btn.querySelector('.play-icon');
+  icon.textContent = isPlaying ? '⏸️' : '▶️';
+}
+
+// Progress bar click to seek
+document.getElementById('progressBar').addEventListener('click', (e) => {
+  if (!currentSong) return;
+  
+  const rect = e.target.getBoundingClientRect();
+  const clickX = e.clientX - rect.left;
+  const width = rect.width;
+  const percentage = clickX / width;
+  const seekTime = percentage * currentSong.duration;
+  
+  seekTo(seekTime);
+  socket.emit('seek', {
+      room_id: roomId,
+      current_time: seekTime
+  });
+});
+
+// Socket events
+socket.on('room_state', (data) => {
+  currentSong = data.current_song;
+  isPlaying = data.is_playing;
+  roomPlaylist = data.playlist || [];
+  updateUI();
+  updateUsersList(data.users);
+  updatePlaylistDisplay();
+  
+  // Load the current song based on its download status
+  if (currentSong) {
+      loadSong(currentSong);
+      if (isPlaying) {
+          setTimeout(() => {
+              if (useOfflinePlayer) {
+                  audioPlayer.play();
+              } else if (isPlayerReady) {
+                  player.playVideo();
+              }
+          }, 500); // Small delay to ensure player is ready
+      }
+  }
+});
+
+socket.on('user_joined', (data) => {
+  updateUsersList(data.users);
+  showNotification(`${data.user} joined the room`);
+});
+
+socket.on('user_left', (data) => {
+  updateUsersList(data.users);
+  showNotification(`${data.user} left the room`);
+});
+
+socket.on('sync_playback', (data) => {
+  playerStateChanging = true;
+  isPlaying = data.is_playing;
+  
+  seekTo(data.current_time);
+  
+  if (isPlaying) {
+      if (useOfflinePlayer) {
+          audioPlayer.play();
+      } else if (isPlayerReady) {
+          player.playVideo();
+      }
+  } else {
+      if (useOfflinePlayer) {
+          audioPlayer.pause();
+      } else if (isPlayerReady) {
+          player.pauseVideo();
+      }
+  }
+  
+  updatePlayPauseButton();
+  setTimeout(() => { playerStateChanging = false; }, 500);
+});
+
+socket.on('sync_seek', (data) => {
+  seekTo(data.current_time);
+});
+
+socket.on('song_changed', (data) => {
+  currentSong = data.song;
+  isPlaying = data.is_playing;
+  
+  if (currentSong) {
+      playerStateChanging = true;
+      
+      // Load the song (offline or YouTube)
+      loadSong(currentSong);
+      
+      setTimeout(() => {
+          if (isPlaying) {
+              if (useOfflinePlayer) {
+                  audioPlayer.play();
+              } else if (isPlayerReady) {
+                  player.playVideo();
+              }
+          }
+          playerStateChanging = false;
+      }, 1000);
+  }
+  
+  updateUI();
+});
+
+socket.on('song_added', (data) => {
+  roomPlaylist = data.playlist;
+  updatePlaylistDisplay();
+  showNotification(`"${data.song.title}" added to playlist and queued for download!`);
+});
+
+socket.on('song_download_started', (data) => {
+  showNotification(`⏳ Downloading: ${data.title}`, 'warning');
+  updateDownloadStatus(data.youtube_id, 'downloading');
+});
+
+socket.on('song_download_complete', (data) => {
+  if (data.success) {
+      showNotification(`✅ Downloaded: Ready to play!`, 'success');
+      updateDownloadStatus(data.youtube_id, 'completed');
+      
+      // Update playlist to show download status
+      roomPlaylist = roomPlaylist.map(song => {
+          if (song.youtube_id === data.youtube_id) {
+              song.is_downloaded = true;
+          }
+          return song;
+      });
+      updatePlaylistDisplay();
+      
+      // If this is the current song and we're using YouTube, switch to offline
+      if (currentSong && currentSong.youtube_id === data.youtube_id && !useOfflinePlayer) {
+          const currentTime = getCurrentTime();
+          const wasPlaying = isPlaying;
+          
+          // Switch to offline player
+          useOfflinePlayer = true;
+          audioPlayer.src = `/stream/${data.youtube_id}`;
+          audioPlayer.currentTime = currentTime;
+          
+          if (wasPlaying) {
+              audioPlayer.play();
+          }
+          
+          showNotification('🎵 Switched to offline playback!', 'success');
+      }
+  } else {
+      showNotification(`❌ Download failed: ${data.message}`, 'error');
+      updateDownloadStatus(data.youtube_id, 'failed');
+  }
+});
+
+function updateDownloadStatus(youtubeId, status) {
+  // Update visual indicators for download status
+  const playlistItems = document.querySelectorAll('.playlist-item');
+  playlistItems.forEach(item => {
+      const songId = item.dataset.youtubeId;
+      if (songId === youtubeId) {
+          item.classList.remove('downloading', 'downloaded', 'failed');
+          item.classList.add(status);
+          
+          const statusIcon = item.querySelector('.download-status');
+          if (statusIcon) {
+              switch(status) {
+                  case 'downloading':
+                      statusIcon.textContent = '⏳';
+                      statusIcon.title = 'Downloading...';
+                      break;
+                  case 'completed':
+                      statusIcon.textContent = '💾';
+                      statusIcon.title = 'Downloaded';
+                      break;
+                  case 'failed':
+                      statusIcon.textContent = '❌';
+                      statusIcon.title = 'Download failed';
+                      break;
+              }
+          }
+      }
+  });
+}
+
+function updateUI() {
+  const currentSongDiv = document.getElementById('currentSong');
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  
+  if (currentSong) {
+      const downloadStatus = currentSong.is_downloaded ? '💾 Offline' : '🌐 Online';
+      const downloadClass = currentSong.is_downloaded ? 'offline' : 'online';
+      
+      currentSongDiv.innerHTML = `
+          <div class="song-info">
+              <img src="${currentSong.thumbnail}" alt="${currentSong.title}" class="current-thumbnail">
+              <div class="song-details">
+                  <div class="song-title">${currentSong.title}</div>
+                  <div class="song-channel">${currentSong.channel_title}</div>
+                  <div class="song-duration">🎵 ${formatTime(currentSong.duration)}</div>
+                  <div class="song-status ${downloadClass}">${downloadStatus}</div>
+              </div>
+          </div>
+      `;
+      playPauseBtn.disabled = false;
+  } else {
+      currentSongDiv.innerHTML = '<span class="no-song">No song playing</span>';
+      playPauseBtn.disabled = true;
+  }
+  
+  updatePlayPauseButton();
+}
+
+function updatePlaylistDisplay() {
+  const playlistDiv = document.getElementById('playlist');
+  
+  if (roomPlaylist.length === 0) {
+      playlistDiv.innerHTML = '<p class="empty-playlist">No songs in playlist yet</p>';
+      return;
+  }
+  
+  playlistDiv.innerHTML = roomPlaylist.map((song, index) => {
+      let downloadStatus, downloadClass, statusTitle;
+      
+      if (song.is_downloaded) {
+          downloadStatus = '💾';
+          downloadClass = 'downloaded';
+          statusTitle = 'Downloaded - Ready to play';
+      } else {
+          downloadStatus = '⏳';
+          downloadClass = 'downloading';
+          statusTitle = 'Downloading...';
+      }
+      
+      const currentClass = currentSong && song.youtube_id === currentSong.youtube_id ? 'current' : '';
+      const playableClass = song.is_downloaded ? 'playable' : 'not-playable';
+      
+      return `
+          <div class="playlist-item ${currentClass} ${downloadClass} ${playableClass}" 
+               data-youtube-id="${song.youtube_id}">
+              <img src="${song.thumbnail}" alt="${song.title}" class="playlist-thumbnail">
+              <div class="playlist-info">
+                  <div class="playlist-title">${song.title}</div>
+                  <div class="playlist-channel">${song.channel_title}</div>
+                  <div class="playlist-duration">🎵 ${formatTime(song.duration)}</div>
+                  ${!song.is_downloaded ? '<div class="download-warning">⚠️ Downloading required to play</div>' : ''}
+              </div>
+              <div class="playlist-status">
+                  <span class="download-status" title="${statusTitle}">${downloadStatus}</span>
+                  <span class="playlist-position">${index + 1}</span>
+              </div>
+          </div>
+      `;
+  }).join('');
+}
+
+function updateUsersList(users) {
+  const usersList = document.getElementById('usersList');
+  const userCount = document.getElementById('userCount');
+  
+  userCount.textContent = `${users.length} user${users.length !== 1 ? 's' : ''} online`;
+  
+  usersList.innerHTML = users.map(user => `
+      <div class="user-item">
+          <span class="user-avatar">👤</span>
+          <span class="user-name">${user}</span>
+      </div>
+  `).join('');
+}
+
+// Update progress tracking
+setInterval(() => {
+  if (currentSong && isPlaying) {
+      const currentTime = getCurrentTime();
+      const progress = (currentTime / currentSong.duration) * 100;
+      document.getElementById('progressFill').style.width = `${progress}%`;
+      document.getElementById('currentTime').textContent = formatTime(Math.floor(currentTime));
+      document.getElementById('totalTime').textContent = formatTime(currentSong.duration);
+  }
+}, 1000);
+
+// Load YouTube API when page loads (as fallback)
+loadYouTubeAPI();
+
+// Leave room when page unloads
+window.addEventListener('beforeunload', () => {
+  socket.emit('leave_room', { room_id: roomId });
+});
+</script>
+{% endblock %}

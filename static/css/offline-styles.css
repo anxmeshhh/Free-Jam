@@ -1,0 +1,187 @@
+/* Offline/Download Status Styles */
+.song-status {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  margin-top: 0.25rem;
+  display: inline-block;
+}
+
+.song-status.offline {
+  background: rgba(40, 167, 69, 0.2);
+  color: #28a745;
+  border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.song-status.online {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+/* Playlist Download Status */
+.playlist-item.downloaded {
+  border-left: 4px solid #28a745;
+}
+
+.playlist-item.downloading {
+  border-left: 4px solid #ffc107;
+  animation: pulse 2s infinite;
+}
+
+.playlist-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.download-status {
+  font-size: 1.2rem;
+  opacity: 0.8;
+}
+
+.playlist-item.downloaded .download-status {
+  color: #28a745;
+}
+
+.playlist-item.downloading .download-status {
+  color: #ffc107;
+}
+
+/* Search Results Download Button */
+.add-song-btn {
+  background: linear-gradient(135deg, #28a745, #20c997);
+  border: none;
+  color: white;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.add-song-btn:hover {
+  background: linear-gradient(135deg, #218838, #1ea085);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+}
+
+/* Notification Enhancements */
+.notification.success {
+  background: linear-gradient(135deg, #28a745, #20c997);
+}
+
+.notification.warning {
+  background: linear-gradient(135deg, #ffc107, #fd7e14);
+  color: #212529;
+}
+
+/* Progress Animation */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Download Progress Indicator */
+.download-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #28a745, #20c997);
+  transition: width 0.3s ease;
+  border-radius: 0 0 10px 10px;
+}
+
+.playlist-item.downloading::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ffc107, transparent);
+  animation: loading 2s infinite;
+}
+
+@keyframes loading {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Offline Mode Indicator */
+.offline-indicator {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  background: rgba(40, 167, 69, 0.9);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideIn 0.3s ease;
+}
+
+.online-indicator {
+  background: rgba(255, 193, 7, 0.9);
+  color: #212529;
+}
+
+/* Enhanced Player Controls for Offline */
+.control-btn.offline-mode {
+  background: rgba(40, 167, 69, 0.2);
+  border-color: #28a745;
+}
+
+.control-btn.online-mode {
+  background: rgba(255, 193, 7, 0.2);
+  border-color: #ffc107;
+}
+
+/* Storage Usage Indicator */
+.storage-info {
+  background: rgba(0, 0, 0, 0.6);
+  padding: 1rem;
+  border-radius: 10px;
+  margin-top: 1rem;
+  border: 1px solid rgba(255, 0, 110, 0.3);
+}
+
+.storage-info h4 {
+  color: #fff;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.storage-bar {
+  background: rgba(255, 255, 255, 0.2);
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.storage-fill {
+  background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.storage-text {
+  color: #ccc;
+  font-size: 0.8rem;
+}

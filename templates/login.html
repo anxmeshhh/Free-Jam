@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome - Free Jam{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <h2>🎵 Welcome to Free Jam</h2>
+            <p>Join the collaborative music experience!</p>
+        </div>
+        
+        <!-- Email Check Form (First Step) -->
+        <div id="emailCheckStep" class="auth-step active">
+            <h3>Let's get started</h3>
+            <p>Enter your email to continue</p>
+            
+            <form id="emailCheckForm" class="auth-form">
+                <div class="form-group">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" name="email" required 
+                           placeholder="your@email.com">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Continue</button>
+            </form>
+        </div>
+        
+        <!-- Login Form (Existing User) -->
+        <div id="loginStep" class="auth-step">
+            <div class="welcome-back">
+                <h3>Welcome back!</h3>
+                <p>We found your account: <strong id="existingUserName"></strong></p>
+                <p>Click below to continue to your dashboard.</p>
+            </div>
+            
+            <form id="loginForm" class="auth-form">
+                <input type="hidden" id="loginEmail" name="email">
+                <button type="submit" class="btn btn-primary">Login to Free Jam</button>
+            </form>
+            
+            <button id="backToEmailBtn" class="btn btn-secondary">Use Different Email</button>
+        </div>
+        
+        <!-- Signup Form (New User) -->
+        <div id="signupStep" class="auth-step">
+            <h3>Create Your Account</h3>
+            <p>You're new here! Let's set up your account.</p>
+            
+            <form id="signupForm" class="auth-form">
+                <div class="form-group">
+                    <label for="signupName">Your Name</label>
+                    <input type="text" id="signupName" name="name" required 
+                           placeholder="Enter your full name">
+                </div>
+                
+                <div class="form-group">
+                    <label for="signupEmail">Email Address</label>
+                    <input type="email" id="signupEmail" name="email" readonly>
+                </div>
+                
+                <div class="signup-benefits">
+                    <h4>What you get:</h4>
+                    <ul>
+                        <li>✨ Create unlimited music rooms</li>
+                        <li>🎵 Add songs from YouTube</li>
+                        <li>👥 Collaborate with friends in real-time</li>
+                        <li>🔒 Private rooms with PIN protection</li>
+                        <li>📱 Works on all devices</li>
+                    </ul>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Create Account & Start Jamming</button>
+            </form>
+            
+            <button id="backToEmailFromSignupBtn" class="btn btn-secondary">Use Different Email</button>
+        </div>
+        
+        <div id="authError" class="error-message" style="display: none;"></div>
+        <div id="authSuccess" class="success-message" style="display: none;"></div>
+    </div>
+    
+    <!-- Features Section -->
+    <div class="features-section">
+        <h3>Why Free Jam?</h3>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🎵</div>
+                <h4>No Accounts Needed</h4>
+                <p>Just your name and email - no passwords to remember!</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h4>Real-time Sync</h4>
+                <p>Everyone hears the same thing at the same time</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🌐</div>
+                <h4>Works Everywhere</h4>
+                <p>No Spotify or YouTube Premium required</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <h4>Private Rooms</h4>
+                <p>Create invite-only sessions with PIN protection</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentStep = 'emailCheck';
+
+// Step management
+function showStep(stepName) {
+    document.querySelectorAll('.auth-step').forEach(step => {
+        step.classList.remove('active');
+    });
+    document.getElementById(stepName + 'Step').classList.add('active');
+    currentStep = stepName;
+}
+
+function showError(message) {
+    const errorDiv = document.getElementById('authError');
+    const successDiv = document.getElementById('authSuccess');
+    
+    successDiv.style.display = 'none';
+    errorDiv.textContent = message;
+    errorDiv.style.display = 'block';
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        errorDiv.style.display = 'none';
+    }, 5000);
+}
+
+function showSuccess(message) {
+    const errorDiv = document.getElementById('authError');
+    const successDiv = document.getElementById('authSuccess');
+    
+    errorDiv.style.display = 'none';
+    successDiv.textContent = message;
+    successDiv.style.display = 'block';
+}
+
+// Email check form
+document.getElementById('emailCheckForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const email = document.getElementById('email').value.trim();
+    
+    if (!email) {
+        showError('Please enter your email address');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/check-email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email })
+        });
+        
+        const data = await response.json();
+        
+        if (data.exists) {
+            // Show login form
+            document.getElementById('existingUserName').textContent = data.name;
+            document.getElementById('loginEmail').value = email;
+            showStep('login');
+        } else {
+            // Show signup form
+            document.getElementById('signupEmail').value = email;
+            showStep('signup');
+        }
+    } catch (error) {
+        showError('Network error. Please try again.');
+    }
+});
+
+// Login form
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const email = document.getElementById('loginEmail').value;
+    
+    try {
+        const response = await fetch('/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess(data.message);
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1000);
+        } else {
+            showError(data.error || 'Login failed');
+        }
+    } catch (error) {
+        showError('Network error. Please try again.');
+    }
+});
+
+// Signup form
+document.getElementById('signupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const name = document.getElementById('signupName').value.trim();
+    const email = document.getElementById('signupEmail').value;
+    
+    if (!name) {
+        showError('Please enter your name');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/signup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name, email })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess(data.message);
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1500);
+        } else {
+            showError(data.error || 'Signup failed');
+        }
+    } catch (error) {
+        showError('Network error. Please try again.');
+    }
+});
+
+// Back buttons
+document.getElementById('backToEmailBtn').addEventListener('click', () => {
+    showStep('emailCheck');
+    document.getElementById('email').focus();
+});
+
+document.getElementById('backToEmailFromSignupBtn').addEventListener('click', () => {
+    showStep('emailCheck');
+    document.getElementById('email').focus();
+});
+
+// Focus on email input when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('email').focus();
+});
+</script>
+{% endblock %}

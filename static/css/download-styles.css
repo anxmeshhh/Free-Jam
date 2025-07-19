@@ -1,0 +1,107 @@
+/* Download-First UI Styles */
+.download-note {
+  color: #ffc107;
+  font-size: 0.75rem;
+  font-style: italic;
+  margin-top: 0.25rem;
+}
+
+.download-warning {
+  color: #ffc107;
+  font-size: 0.7rem;
+  font-style: italic;
+  margin-top: 0.25rem;
+}
+
+.playlist-item.not-playable {
+  opacity: 0.7;
+  border-left: 4px solid #ffc107;
+}
+
+.playlist-item.playable {
+  border-left: 4px solid #28a745;
+}
+
+.playlist-item.not-playable .playlist-title {
+  color: #ccc;
+}
+
+.playlist-item.downloading::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ffc107, transparent);
+  animation: downloadProgress 2s infinite;
+}
+
+@keyframes downloadProgress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Download Queue Status */
+.download-queue-status {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.download-queue-status.empty {
+  display: none;
+}
+
+.queue-info {
+  color: #ffc107;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* Enhanced notifications for download states */
+.notification.download-started {
+  background: linear-gradient(135deg, #ffc107, #fd7e14);
+  color: #212529;
+}
+
+.notification.download-complete {
+  background: linear-gradient(135deg, #28a745, #20c997);
+}
+
+.notification.download-failed {
+  background: linear-gradient(135deg, #dc3545, #c82333);
+}
+
+/* Player disabled state */
+.control-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: rgba(108, 117, 125, 0.2);
+  border-color: #6c757d;
+}
+
+.control-btn:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Search result download emphasis */
+.search-result .add-song-btn {
+  background: linear-gradient(135deg, #ffc107, #fd7e14);
+  color: #212529;
+  font-weight: 600;
+}
+
+.search-result .add-song-btn:hover {
+  background: linear-gradient(135deg, #e0a800, #ea6100);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(255, 193, 7, 0.3);
+}

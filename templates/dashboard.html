@@ -1,0 +1,838 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Free Jam{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+  <div class="dashboard-header">
+      <div class="user-welcome">
+          <h2>Welcome back, {{ session.user_name }}! 🎵</h2>
+          <p>Ready to create some musical magic? Start by creating a room or joining an existing one.</p>
+      </div>
+      
+      <div class="user-stats">
+          <div class="stat-card">
+              <span class="stat-number" id="userRoomsCount">0</span>
+              <span class="stat-label">Rooms Created</span>
+          </div>
+          <div class="stat-card">
+              <span class="stat-number" id="userSongsAddedCount">0</span>
+              <span class="stat-label">Songs Added</span>
+          </div>
+          <div class="stat-card">
+              <span class="stat-number" id="userSongsDownloadedCount">0</span>
+              <span class="stat-label">Songs Downloaded</span>
+          </div>
+      </div>
+  </div>
+  
+  <div class="dashboard-actions">
+      <div class="action-card">
+          <div class="action-header">
+              <h3>🎵 Create New Room</h3>
+              <p>Start a new collaborative music session</p>
+          </div>
+          
+          <form id="createRoomForm" class="room-form">
+              <div class="form-group">
+                  <label for="roomName">Room Name</label>
+                  <input type="text" id="roomName" name="roomName" required 
+                         placeholder="My Awesome Playlist">
+              </div>
+              
+              <div class="form-group">
+                  <label class="checkbox-label">
+                      <input type="checkbox" id="isPrivate" name="isPrivate">
+                      <span class="checkmark"></span>
+                      Make room private
+                  </label>
+                  <small class="form-help">Private rooms require a PIN to join</small>
+              </div>
+              
+              <div id="pinGroup" class="form-group" style="display: none;">
+                  <label for="roomPin">Room PIN (4 digits)</label>
+                  <input type="text" id="roomPin" name="roomPin" maxlength="4" 
+                         pattern="[0-9]{4}" placeholder="1234">
+                  <small class="form-help">Share this PIN with friends to let them join</small>
+              </div>
+              
+              <button type="submit" class="btn btn-primary">
+                  <span class="btn-icon">🚀</span>
+                  Create Room
+              </button>
+          </form>
+      </div>
+      
+      <div class="action-card">
+          <div class="action-header">
+              <h3>🎯 Join Existing Room</h3>
+              <p>Jump into a friend's music session</p>
+          </div>
+          
+          <form id="joinRoomForm" class="room-form">
+              <div class="form-group">
+                  <label for="joinRoomId">Room ID or Search</label>
+                  <input type="text" id="joinRoomId" name="joinRoomId" required 
+                         placeholder="Enter room ID or search by name">
+                  <div id="roomSuggestions" class="room-suggestions"></div>
+              </div>
+              
+              <div id="joinPinGroup" class="form-group" style="display: none;">
+                  <label for="joinPin">Room PIN</label>
+                  <input type="text" id="joinPin" name="joinPin" maxlength="4"
+                         placeholder="Enter 4-digit PIN">
+              </div>
+              
+              <button type="submit" class="btn btn-primary">
+                  <span class="btn-icon">🎵</span>
+                  Join Room
+              </button>
+          </form>
+      </div>
+  </div>
+  
+  <!-- Dashboard Tabs Section -->
+  <div class="dashboard-tabs-section">
+      <div class="tabs">
+          <button class="tab-btn active" data-tab="liveRooms">🔴 Live Rooms</button>
+          <button class="tab-btn" data-tab="yourRooms">🏠 Your Rooms</button>
+          <button class="tab-btn" data-tab="yourPlaylist">💾 Your Playlist</button>
+      </div>
+
+      <div id="liveRoomsTab" class="tab-content active">
+          <div class="section-header">
+              <h3>Active Music Sessions</h3>
+              <button id="refreshLiveRooms" class="btn btn-secondary">🔄 Refresh</button>
+          </div>
+          <div id="liveRoomsList" class="live-rooms-grid">
+              <div class="loading-rooms">Loading live rooms...</div>
+          </div>
+      </div>
+
+      <div id="yourRoomsTab" class="tab-content">
+          <div class="section-header">
+              <h3>Rooms You Created</h3>
+              <button id="refreshYourRooms" class="btn btn-secondary">🔄 Refresh</button>
+          </div>
+          <div id="yourRoomsList" class="live-rooms-grid">
+              <div class="loading-rooms">Loading your rooms...</div>
+          </div>
+      </div>
+
+      <div id="yourPlaylistTab" class="tab-content">
+          <div class="section-header">
+              <h3>Your Downloaded Songs</h3>
+              <button id="refreshYourPlaylist" class="btn btn-secondary">🔄 Refresh</button>
+          </div>
+          <div id="yourPlaylistSongsList" class="downloaded-songs-grid">
+              <div class="loading-songs">Loading your downloaded songs...</div>
+          </div>
+          <!-- Hidden audio player for local playback on dashboard -->
+          <audio id="dashboardLocalAudioPlayer" preload="metadata" style="display: none;"></audio>
+      </div>
+  </div>
+  
+  <div id="errorMessage" class="error-message" style="display: none;"></div>
+  <div id="successMessage" class="success-message" style="display: none;"></div>
+</div>
+
+<script>
+let roomSearchTimeout;
+let dashboardLocalAudioPlayer = document.getElementById('dashboardLocalAudioPlayer');
+let currentPlayingDashboardLocalSongId = null;
+
+// Function to format time (copied from history.html)
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Function to show notification (copied from history.html)
+function showNotification(message, type = 'success') {
+  const notification = document.createElement('div');
+  notification.className = `notification ${type}`;
+  notification.textContent = message;
+  document.body.appendChild(notification);
+  
+  setTimeout(() => {
+      notification.remove();
+  }, 3000);
+}
+
+// Load real-time user stats
+async function loadUserStats() {
+  try {
+      const response = await fetch('/user-stats');
+      const stats = await response.json();
+      
+      document.getElementById('userRoomsCount').textContent = stats.rooms_created;
+      document.getElementById('userSongsAddedCount').textContent = stats.songs_added;
+      document.getElementById('userSongsDownloadedCount').textContent = stats.songs_downloaded;
+  } catch (error) {
+      console.log('Could not load user stats');
+  }
+}
+
+// Load live rooms
+async function loadLiveRooms() {
+  try {
+      const response = await fetch('/live-rooms');
+      const data = await response.json();
+      displayLiveRooms(data.rooms);
+  } catch (error) {
+      console.log('Could not load live rooms');
+      document.getElementById('liveRoomsList').innerHTML = '<div class="no-rooms">No live rooms available</div>';
+  }
+}
+
+// Display live rooms
+function displayLiveRooms(rooms) {
+  const container = document.getElementById('liveRoomsList');
+  
+  if (rooms.length === 0) {
+      container.innerHTML = '<div class="no-rooms">No live rooms available. Create one to get started!</div>';
+      return;
+  }
+  
+  container.innerHTML = rooms.map(room => `
+      <div class="live-room-card ${room.is_private ? 'private' : ''}" onclick="joinLiveRoom('${room.id}', ${room.is_private})">
+          <div class="room-header">
+              <h4 class="room-name">${escapeHtml(room.name)}</h4>
+              <div class="room-status">
+                  <span class="user-count">👥 ${room.active_users}</span>
+                  ${room.is_private ? '<span class="private-badge">🔒</span>' : ''}
+              </div>
+          </div>
+          <div class="room-info">
+              <p class="creator">by ${escapeHtml(room.creator_name)}</p>
+              ${room.current_song ? `<p class="current-song">🎵 ${escapeHtml(room.current_song)}</p>` : '<p class="no-song">No song playing</p>'}
+          </div>
+          <div class="join-button">
+              <span class="join-text">Click to Join</span>
+          </div>
+      </div>
+  `).join('');
+}
+
+// Join live room
+async function joinLiveRoom(roomId, isPrivate) {
+  if (isPrivate) {
+      const pin = prompt('This room is private. Enter the PIN:');
+      if (pin === null) return; // User cancelled prompt
+      
+      // Trim the PIN before sending
+      const trimmedPin = pin.trim();
+
+      try {
+          const response = await fetch('/join-room', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ room_id: roomId, pin: trimmedPin })
+          });
+          
+          const data = await response.json();
+          if (data.success) {
+              window.location.href = `/room/${roomId}`;
+          } else {
+              showError(data.error);
+          }
+      } catch (error) {
+          showError('Failed to join room');
+      }
+  } else {
+      window.location.href = `/room/${roomId}`;
+  }
+}
+
+// Search rooms as user types
+async function searchRooms(query) {
+  if (!query.trim()) {
+      document.getElementById('roomSuggestions').innerHTML = '';
+      return;
+  }
+  
+  try {
+      const response = await fetch(`/search-rooms?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      displayRoomSuggestions(data.rooms);
+  } catch (error) {
+      console.log('Room search failed');
+  }
+}
+
+// Display room search suggestions
+function displayRoomSuggestions(rooms) {
+  const container = document.getElementById('roomSuggestions');
+  
+  if (rooms.length === 0) {
+      container.innerHTML = '<div class="no-suggestions">No rooms found</div>';
+      return;
+  }
+  
+  container.innerHTML = rooms.map(room => `
+      <div class="room-suggestion" onclick="selectRoom('${room.id}', '${escapeHtml(room.name)}', ${room.is_private})">
+          <div class="suggestion-info">
+              <span class="suggestion-name">${escapeHtml(room.name)}</span>
+              <span class="suggestion-meta">👥 ${room.active_users} • by ${escapeHtml(room.creator_name)}</span>
+          </div>
+          ${room.is_private ? '<span class="private-badge">🔒</span>' : ''}
+      </div>
+  `).join('');
+}
+
+// Select room from suggestions
+function selectRoom(roomId, roomName, isPrivate) {
+  document.getElementById('joinRoomId').value = roomId;
+  document.getElementById('roomSuggestions').innerHTML = '';
+  
+  if (isPrivate) {
+      document.getElementById('joinPinGroup').style.display = 'block';
+      document.getElementById('joinPin').required = true;
+      document.getElementById('joinPin').focus();
+  } else {
+      document.getElementById('joinPinGroup').style.display = 'none';
+      document.getElementById('joinPin').required = false;
+  }
+}
+
+// Room search input handler
+document.getElementById('joinRoomId').addEventListener('input', (e) => {
+  clearTimeout(roomSearchTimeout);
+  roomSearchTimeout = setTimeout(() => {
+      searchRooms(e.target.value);
+  }, 300);
+});
+
+// Hide suggestions when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.form-group')) {
+      document.getElementById('roomSuggestions').innerHTML = '';
+  }
+});
+
+// NEW: Load user's created rooms
+async function loadYourRooms() {
+  const container = document.getElementById('yourRoomsList');
+  container.innerHTML = '<div class="loading-rooms">Loading your rooms...</div>';
+
+  try {
+      const response = await fetch('/api/user-rooms');
+      const data = await response.json();
+
+      if (data.rooms && data.rooms.length > 0) {
+          container.innerHTML = data.rooms.map(room => `
+              <div class="live-room-card ${room.is_private ? 'private' : ''}" onclick="joinLiveRoom('${room.id}', ${room.is_private})">
+                  <div class="room-header">
+                      <h4 class="room-name">${escapeHtml(room.name)}</h4>
+                      <div class="room-status">
+                          <span class="user-count">👥 ${room.active_users}</span>
+                          ${room.is_private ? '<span class="private-badge">🔒</span>' : ''}
+                      </div>
+                  </div>
+                  <div class="room-info">
+                      <p class="creator">Created: ${new Date(room.created_at).toLocaleDateString()}</p>
+                      ${room.current_song ? `<p class="current-song">🎵 ${escapeHtml(room.current_song)}</p>` : '<p class="no-song">No song playing</p>'}
+                  </div>
+                  <div class="join-button">
+                      <span class="join-text">Click to Join</span>
+                  </div>
+              </div>
+          `).join('');
+      } else {
+          container.innerHTML = '<div class="no-rooms">You haven\'t created any rooms yet.</div>';
+      }
+  } catch (error) {
+      console.error('Error loading your rooms:', error);
+      container.innerHTML = '<div class="error-message">Failed to load your rooms.</div>';
+  }
+}
+
+// NEW: Load user's downloaded songs for "Your Playlist" tab (adapted from history.html)
+async function loadYourPlaylist() {
+  const container = document.getElementById('yourPlaylistSongsList');
+  container.innerHTML = '<div class="loading-songs">Loading your downloaded songs...</div>';
+  
+  try {
+      const response = await fetch('/api/downloaded-songs');
+      const data = await response.json();
+      
+      if (data.songs && data.songs.length > 0) {
+          container.innerHTML = data.songs.map(song => `
+              <div class="downloaded-song-card" data-youtube-id="${song.youtube_id}">
+                  <img src="${song.thumbnail}" alt="${escapeHtml(song.title)}" class="song-thumbnail" 
+                       onerror="this.src='https://img.youtube.com/vi/${song.youtube_id}/mqdefault.jpg'">
+                  <div class="song-info">
+                      <h4 class="song-title">${escapeHtml(song.title)}</h4>
+                      <p class="song-channel">${escapeHtml(song.channel_title)}</p>
+                      <p class="song-duration">🎵 ${formatTime(song.duration)}</p>
+                  </div>
+                  <div class="song-actions">
+                      <button class="btn btn-primary play-dashboard-local-btn" 
+                              data-youtube-id="${song.youtube_id}"
+                              data-title="${escapeHtml(song.title)}">
+                          ${currentPlayingDashboardLocalSongId === song.youtube_id && !dashboardLocalAudioPlayer.paused ? '⏸️ Pause' : '▶️ Play'}
+                      </button>
+                      <button class="btn btn-secondary add-to-room-btn" 
+                              data-youtube-id="${song.youtube_id}"
+                              data-title="${escapeHtml(song.title)}"
+                              data-duration="${song.duration}"
+                              data-thumbnail="${song.thumbnail}"
+                              data-channel-title="${escapeHtml(song.channel_title)}">
+                          ➕ Add to Room
+                      </button>
+                  </div>
+              </div>
+          `).join('');
+          updateDashboardPlayButtons();
+      } else {
+          container.innerHTML = '<div class="no-songs">You haven\'t downloaded any songs yet. Add some from a room!</div>';
+      }
+  } catch (error) {
+      console.error('Error loading your playlist:', error);
+      container.innerHTML = '<div class="error-message">Failed to load your playlist.</div>';
+  }
+}
+
+// Update play/pause buttons for dashboard local player (adapted from history.html)
+function updateDashboardPlayButtons() {
+  document.querySelectorAll('.play-dashboard-local-btn').forEach(btn => {
+      const youtubeId = btn.dataset.youtubeId;
+      if (youtubeId === currentPlayingDashboardLocalSongId && !dashboardLocalAudioPlayer.paused) {
+          btn.innerHTML = '⏸️ Pause';
+      } else {
+          btn.innerHTML = '▶️ Play';
+      }
+  });
+}
+
+// Event listener for "Play" buttons on dashboard (adapted from history.html)
+document.getElementById('yourPlaylistSongsList').addEventListener('click', async (e) => {
+  if (e.target.classList.contains('play-dashboard-local-btn')) {
+      const btn = e.target;
+      const youtubeId = btn.dataset.youtubeId;
+      const title = btn.dataset.title;
+
+      if (currentPlayingDashboardLocalSongId === youtubeId) {
+          // Same song, toggle play/pause
+          if (dashboardLocalAudioPlayer.paused) {
+              dashboardLocalAudioPlayer.play();
+              showNotification(`▶️ Playing: ${title}`);
+          } else {
+              dashboardLocalAudioPlayer.pause();
+              showNotification(`⏸️ Paused: ${title}`);
+          }
+      } else {
+          // New song, load and play
+          dashboardLocalAudioPlayer.src = `/stream/${youtubeId}`;
+          dashboardLocalAudioPlayer.load();
+          dashboardLocalAudioPlayer.play();
+          currentPlayingDashboardLocalSongId = youtubeId;
+          showNotification(`▶️ Playing: ${title}`);
+      }
+      updateDashboardPlayButtons();
+  }
+});
+
+// Event listener for "Add to Room" buttons on dashboard (adapted from history.html)
+document.getElementById('yourPlaylistSongsList').addEventListener('click', async (e) => {
+  if (e.target.classList.contains('add-to-room-btn')) {
+      const btn = e.target;
+      const youtubeId = btn.dataset.youtubeId;
+      const title = btn.dataset.title;
+      const duration = parseInt(btn.dataset.duration);
+      const thumbnail = btn.dataset.thumbnail;
+      const channelTitle = btn.dataset.channelTitle;
+
+      const roomId = prompt('Enter the Room ID you want to add this song to:');
+      if (!roomId) {
+          showNotification('Room ID is required to add a song.', 'error');
+          return;
+      }
+
+      let pin = null;
+      try {
+          const response = await fetch('/add-song', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                  room_id: roomId,
+                  youtube_id: youtubeId,
+                  title: title,
+                  duration: duration,
+                  thumbnail: thumbnail,
+                  channel_title: channelTitle,
+                  pin: pin
+              })
+          });
+          
+          const data = await response.json();
+
+          if (response.status === 403 && data.message === 'Invalid PIN for private room') {
+              pin = prompt(`Room "${roomId}" is private. Please enter the PIN:`);
+              if (pin === null) { // Check for null if user cancels prompt
+                  showNotification('PIN is required for private rooms.', 'error');
+                  return;
+              }
+              // Trim the PIN before retrying
+              pin = pin.trim();
+
+              const retryResponse = await fetch('/add-song', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ room_id: roomId, youtube_id: youtubeId, title: title, duration: duration, thumbnail: thumbnail, channel_title: channelTitle, pin: pin })
+              });
+              const retryData = await retryResponse.json();
+              if (retryData.success) { showNotification(retryData.message); } else { showNotification(retryData.message, 'error'); }
+          } else if (data.success) {
+              showNotification(data.message);
+          } else {
+              showNotification(data.message, 'error');
+          }
+      } catch (error) {
+          console.error('Error adding song to room:', error);
+          showNotification('Network error. Failed to add song to room.', 'error');
+      }
+  }
+});
+
+// Handle dashboard local audio player events (copied from history.html)
+dashboardLocalAudioPlayer.addEventListener('ended', () => {
+  currentPlayingDashboardLocalSongId = null;
+  updateDashboardPlayButtons();
+  showNotification('Local playback ended.');
+});
+
+dashboardLocalAudioPlayer.addEventListener('pause', () => {
+  updateDashboardPlayButtons();
+});
+
+dashboardLocalAudioPlayer.addEventListener('play', () => {
+  updateDashboardPlayButtons();
+});
+
+dashboardLocalAudioPlayer.addEventListener('error', (e) => {
+  console.error('Dashboard local audio player error:', e);
+  showNotification('Error playing song locally on dashboard.', 'error');
+  currentPlayingDashboardLocalSongId = null;
+  updateDashboardPlayButtons();
+});
+
+
+// Load stats and rooms on page load
+document.addEventListener('DOMContentLoaded', () => {
+  loadUserStats();
+  loadLiveRooms(); // Load default tab content
+  
+  // Refresh stats every 30 seconds
+  setInterval(loadUserStats, 30000);
+  
+  // Refresh live rooms every 15 seconds
+  setInterval(loadLiveRooms, 15000);
+});
+
+// Refresh buttons
+document.getElementById('refreshLiveRooms').addEventListener('click', loadLiveRooms);
+document.getElementById('refreshYourRooms').addEventListener('click', loadYourRooms);
+document.getElementById('refreshYourPlaylist').addEventListener('click', loadYourPlaylist);
+
+
+// Toggle PIN field for private rooms
+document.getElementById('isPrivate').addEventListener('change', (e) => {
+  const pinGroup = document.getElementById('pinGroup');
+  const pinInput = document.getElementById('roomPin');
+  
+  if (e.target.checked) {
+      pinGroup.style.display = 'block';
+      pinInput.required = true;
+      pinInput.focus();
+  } else {
+      pinGroup.style.display = 'none';
+      pinInput.required = false;
+      pinInput.value = '';
+  }
+});
+
+// Create room form
+document.getElementById('createRoomForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalText = submitBtn.innerHTML;
+  
+  // Show loading state
+  submitBtn.classList.add('loading');
+  submitBtn.disabled = true;
+  
+  const formData = new FormData(e.target);
+  const roomName = formData.get('roomName').trim();
+  const isPrivate = formData.get('isPrivate') === 'on';
+  const pin = formData.get('roomPin');
+  
+  if (!roomName) {
+      showError('Room name is required');
+      resetButton(submitBtn, originalText);
+      return;
+  }
+  
+  if (isPrivate && (!pin || pin.length !== 4)) {
+      showError('Private rooms require a 4-digit PIN');
+      resetButton(submitBtn, originalText);
+      return;
+  }
+  
+  try {
+      const response = await fetch('/create-room', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+              name: roomName,
+              is_private: isPrivate,
+              pin: pin ? pin.trim() : null // Trim PIN on creation
+          })
+      });
+      
+      const data = await response.json();
+      
+      if (data.room_id) {
+          showSuccess(`Room "${roomName}" created successfully! Redirecting...`);
+          setTimeout(() => {
+              window.location.href = `/room/${data.room_id}`;
+          }, 1500);
+      } else {
+          showError(data.error || 'Failed to create room');
+          resetButton(submitBtn, originalText);
+      }
+  } catch (error) {
+      showError('Network error. Please try again.');
+      resetButton(submitBtn, originalText);
+  }
+});
+
+// Join room form
+document.getElementById('joinRoomForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalText = submitBtn.innerHTML;
+  
+  // Show loading state
+  submitBtn.classList.add('loading');
+  submitBtn.disabled = true;
+  
+  const formData = new FormData(e.target);
+  const roomId = formData.get('joinRoomId').trim();
+  let pin = formData.get('joinPin'); // Use let for reassigning
+
+  // Trim the PIN from the form data
+  if (pin) {
+      pin = pin.trim();
+  }
+  
+  if (!roomId) {
+      showError('Room ID is required');
+      resetButton(submitBtn, originalText);
+      return;
+  }
+  
+  try {
+      const response = await fetch('/join-room', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+              room_id: roomId,
+              pin: pin
+          })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+          showSuccess(`Joining "${data.room_name}"...`);
+          setTimeout(() => {
+              window.location.href = `/room/${roomId}`;
+          }, 1000);
+      } else {
+          if (data.error === 'Invalid PIN') {
+              document.getElementById('joinPinGroup').style.display = 'block';
+              document.getElementById('joinPin').required = true;
+              document.getElementById('joinPin').focus();
+          }
+          showError(data.error || 'Failed to join room');
+          resetButton(submitBtn, originalText);
+      }
+  } catch (error) {
+      showError('Network error. Please try again.');
+      resetButton(submitBtn, originalText);
+  }
+});
+
+function resetButton(button, originalText) {
+  button.classList.remove('loading');
+  button.disabled = false;
+  button.innerHTML = originalText;
+}
+
+function showError(message) {
+  const errorDiv = document.getElementById('errorMessage');
+  const successDiv = document.getElementById('successMessage');
+  
+  successDiv.style.display = 'none';
+  errorDiv.textContent = message;
+  errorDiv.style.display = 'block';
+  
+  setTimeout(() => {
+      errorDiv.style.display = 'none';
+  }, 5000);
+}
+
+function showSuccess(message) {
+  const errorDiv = document.getElementById('errorMessage');
+  const successDiv = document.getElementById('successMessage');
+  
+  errorDiv.style.display = 'none';
+  successDiv.textContent = message;
+  successDiv.style.display = 'block';
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Dashboard Tab switching
+document.querySelectorAll('.dashboard-tabs-section .tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+      const tabName = btn.dataset.tab;
+      
+      // Update active tab button
+      document.querySelectorAll('.dashboard-tabs-section .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // Update active tab content
+      document.querySelectorAll('.dashboard-tabs-section .tab-content').forEach(content => {
+          content.classList.remove('active');
+      });
+      document.getElementById(tabName + 'Tab').classList.add('active');
+
+      // Load content for the activated tab
+      if (tabName === 'liveRooms') {
+          loadLiveRooms();
+      } else if (tabName === 'yourRooms') {
+          loadYourRooms();
+      } else if (tabName === 'yourPlaylist') {
+          loadYourPlaylist();
+      }
+  });
+});
+</script>
+
+<style>
+/* New styles for the downloaded songs section (copied from history.html) */
+.downloaded-songs-section {
+  margin-top: 3rem;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(20px);
+  border-radius: 20px;
+  padding: 2rem;
+  box-shadow: 0 15px 50px rgba(255, 0, 110, 0.2);
+  border: 1px solid rgba(255, 0, 110, 0.3);
+}
+
+.downloaded-songs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.downloaded-song-card {
+  background: rgba(255, 0, 110, 0.1);
+  padding: 1rem;
+  border-radius: 15px;
+  border: 1px solid rgba(255, 0, 110, 0.3);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.downloaded-song-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 40px rgba(255, 0, 110, 0.3);
+  border-color: #ff006e;
+}
+
+.song-thumbnail {
+  width: 100%;
+  max-width: 180px;
+  height: 135px; /* Maintain aspect ratio for 4:3 thumbnails */
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.song-info {
+  flex-grow: 1;
+  margin-bottom: 1rem;
+}
+
+.song-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+
+.song-channel {
+  font-size: 0.9rem;
+  color: #ccc;
+  margin-bottom: 0.25rem;
+}
+
+.song-duration {
+  font-size: 0.85rem;
+  color: #8338ec;
+}
+
+.song-actions {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.song-actions .btn {
+  flex: 1;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.loading-songs, .no-songs {
+  text-align: center;
+  color: #ccc;
+  padding: 3rem;
+  font-style: italic;
+  grid-column: 1 / -1; /* Span across all columns */
+}
+
+@media (max-width: 768px) {
+  .downloaded-songs-grid {
+      grid-template-columns: 1fr;
+  }
+  .downloaded-song-card {
+      max-width: 350px;
+      margin: 0 auto;
+  }
+}
+</style>
+{% endblock %}
