@@ -671,7 +671,7 @@ function updateUI() {
               </div>
           </div>
       `;
-      playPauseBtn.disabled = !currentSong.is_downloaded && !isPlayerReady;
+      playPauseBtn.disabled = false;
   } else {
       currentSongDiv.innerHTML = '<span class="no-song">No song playing</span>';
       playPauseBtn.disabled = true;
